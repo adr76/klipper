@@ -16,7 +16,7 @@ IODIRA = 0x00       # IN/OUT PA
 IODIRB = 0x01       # IN/OUT PA
 GPINTENA = 0x04     # INT PA
 GPINTENB = 0x05     # INT PB
-DEFVALA = 0x06
+DEFVALA = 0
 DEFVALB = 0x07
 INTCONA = 0x08
 INTCONB = 0x09
@@ -46,23 +46,35 @@ i2cget -y 0 0x20 0x12 && i2cget -y 0 0x20 0x13
 
 i2cset -y 0 0x20 0x00 0xFF              # SET ALL INPUTS PORTA
 
-### Oled Controller
-# Init Ports: KEYs - IN LEDs - OUT
+# Ports for INPUT/OUT
 i2cset -y 0 0x20 0x00 $(( 2#01011111 )) # SET PA INPUTS 11111010  A5 A7    - OUT(LEDS)
 i2cset -y 0 0x20 0x01 $(( 2#01101101 )) # SET PB INPUTS 10110110  B1 B4 B7 - OUT(LEDS)
 i2cset -y 0 0x20 0x00 0x5f              # SET PA IN in HEX
 i2cset -y 0 0x20 0x01 0x6d              # SET PB IN in HEX
-i2cset -y 0 0x20 0x00 0x5f && i2cset -y 0 0x20 0x01 0x6d
-# LED OFF
-i2cset -y 0 0x20 0x12 0x5f && i2cset -y 0 0x20 0x13 0x6d
-
-# Set Keys PulUps
+# Ports PulUps
 i2cset -y 0 0x20 0x0C 0x5f              # SET PULUP A KEYS
 i2cset -y 0 0x20 0x0D 0x6d              # SET PULUP B KEYS
-i2cset -y 0 0x20 0x0C 0x5f && i2cset -y 0 0x20 0x0D 0x6d
+# INT MIRROR & INTPOLUP
+i2cset -y 0 0x20 0x0A $(( 2#01000010 ))
+i2cset -y 0 0x20 0x0A # 0x42
 
-## Interrupt
-# Disable All
+
+###  OLED CONTROLLER  ###
+#------- MCP23017 ------#
+#
+# LED1 LED2 LED3 LED4 LED5
+# 9    12   15   5    7  
+# KEY1 KEY2 KEY3 KEY4 KEY5 KEY6 KEY7 KEY8 KEY9 KEY10 KEY11
+# 8    10   11   0    1    2    3    4    13   14    6
+
+
+# SET INPUT(KEYS) / OUT(LED)
+i2cset -y 0 0x20 0x00 0x5f && i2cset -y 0 0x20 0x01 0x6d
+# KEYS PULUP
+i2cset -y 0 0x20 0x0C 0x5f && i2cset -y 0 0x20 0x0D 0x6d
+# LED OFF
+i2cset -y 0 0x20 0x12 0x5f && i2cset -y 0 0x20 0x13 0x6d
+# Disable Interrupt
 i2cset -y 0 0x20 0x04 0x00 && i2cset -y 0 0x20 0x05 0x00
 
 ## LEDs test
@@ -75,7 +87,28 @@ i2cset -y 0 0x20 0x13 $(( 2#01101111 )) && i2cget -y 0 0x20 0x13 # LED1 ON BLUE
 i2cset -y 0 0x20 0x13 0x6f # LED1 ON BLUE
 i2cset -y 0 0x20 0x13 0x7d # LED2 ON RED
 i2cset -y 0 0x20 0x13 0xed # LED3 ON BLUE
-i2cset -y 0 0x20 0x12 0x5f # LED4 ON GREEN
+i2cset -y 0 0x20 0x12 0x7f # LED4 ON GREEN
 i2cset -y 0 0x20 0x12 0xdf # LED5 ON YELLOW
 # ALL LED OFF (Init State)
 i2cset -y 0 0x20 0x12 0x5f && i2cset -y 0 0x20 0x13 0x6d
+
+### WiringPi Metod ###
+######################
+
+# mcp23017:[Base]:[i2c addr]
+gpio -x mcp23017:100:0x20 mode 109 out
+gpio -x mcp23017:100:0x20 write 109 1
+gpio -x mcp23017:100:0x20 write 109 0
+
+
+# Define Leds & Keys Arrays
+leds=(109 112 115 105 107)
+keys=(108 110 111 100 101 102 103 104 113 114 106)
+
+# LED Test
+for led in ${leds[@]}; do
+  gpio -x mcp23017:100:0x20 $led 1
+  sleep 1
+  gpio -x mcp23017:100:0x20 $led 0
+done
+

@@ -34,10 +34,11 @@ sudo usermod -a -G tty pi
 sudo service klipper stop
 cd ~/klipper
 git pull
-# ~/klipper/scripts/install-octopi.sh
+~/klipper/scripts/install-octopi.sh
 make clean
 make menuconfig
 make
+ps_on
 ./scripts/flash-sdcard.sh /dev/ttyS3 btt-skr-v1.4
 sudo service klipper start
 
