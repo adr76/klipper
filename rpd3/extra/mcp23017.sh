@@ -47,6 +47,9 @@ i2cget -y 0 0x20 0x12 && i2cget -y 0 0x20 0x13
 i2cset -y 0 0x20 0x00 0xFF              # SET ALL INPUTS PORTA
 
 # Ports for INPUT/OUT
+# PA         PB    
+# 1111 1010  1011 0110
+# 
 i2cset -y 0 0x20 0x00 $(( 2#01011111 )) # SET PA INPUTS 11111010  A5 A7    - OUT(LEDS)
 i2cset -y 0 0x20 0x01 $(( 2#01101101 )) # SET PB INPUTS 10110110  B1 B4 B7 - OUT(LEDS)
 i2cset -y 0 0x20 0x00 0x5f              # SET PA IN in HEX

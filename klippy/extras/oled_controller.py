@@ -7,6 +7,7 @@
 # This file may be distributed under the terms of the GNU GPLv3 license.
 
 # import pins
+import os
 import logging
 from . import bus
 
@@ -34,30 +35,39 @@ GPIOB      = 0x13
 OLATA      = 0x14
 OLATB      = 0x15
 
-REG_DATA = {
-    'DEFA':int('01011111',2),
-    'DEFB':int('01101101',2),
-    'LED1':int('01101111',2), #PB
-    'LED2':int('01111101',2), #PB
-    'LED3':int('11101101',2), #PB
-    'LED4':int('01111111',2), #PA
-    'LED5':int('11011111',2), #PA
-    'LED45':int('11111111',2), #PA
-}
+GPIOA_DEF = 0x5f
+GPIOB_DEF = 0x6d
+GPIO_DEF = 0x5f6d
 
 LED = {
-    '1'     : [0x13, 0x6f], #blue
-    '2'     : [0x13, 0x7d], #red
-    '3'     : [0x13, 0xed], #blue
-    '4'     : [0x12, 0x7f], #green
-    '5'     : [0x12, 0xdf], #yellow
-    '45'    : [0x12, 0xff], #green & yellow
-    'OFFA'  : [0x12, 0x5f], # Off 4 5
-    'OFFB'  : [0x13, 0x6d]  # Off 1 2 3
+    '1'     : 9, #blue
+    '2'     : 12, #red
+    '3'     : 15, #blue
+    '4'     : 5, #green
+    '5'     : 7 #yellow
 }
 
-MCP23017_REPORT_TIME = .8
+KEYS = {
+    '1'        : 0x1, # UP
+    '21'       : 0x5, # F + UP 
+    '2'        : 0x4, # F
+    '23'       : 0xc, # F + Down
+    '3'        : 0x8, # Down
+    '4'        : 0x100, # Home
+    '5'        : 0x200, # Light
+    '6'        : 0x400, #key 6
+    '7'        : 0x800, #key 7
+    '8'        : 0x1000, #key 8
+    '9'        : 0x20, # PSU/PowerOff(longPress)
+    '10'       : 0x40, # Fan
+    '11'       : 0x4000# Pause/Resume
+}
 
+MCP23017_REPORT_TIME = .5 #sec
+
+# Klipper Log
+# tail -f /tmp/klippy.log | grep -i -E "(mcp23017:|oled_controller.py|error)"
+# tail -f /tmp/klippy.log | grep -i -E "(mcp23017:|error)
 class mcp23017(object):
     def __init__(self, config):
         self.printer = config.get_printer()
@@ -66,17 +76,23 @@ class mcp23017(object):
         self.i2c = bus.MCU_I2C_from_config(config, MCP23017_ADDR, MCP23017_SPEED)
         self.mcu = self.i2c.get_mcu()
         self.report_time = MCP23017_REPORT_TIME
-        self.data = "null"
+        self.data = 0
+        self.gcode = self.printer.lookup_object('gcode')
+        # Asing gcode_macro key_(key_name)_gcode: M117 Key (name) Press
+        gcode_macro = self.printer.load_object(config, 'gcode_macro')
+        self.KEYS_TMPL = {}
+        for key in KEYS.iteritems():
+            self.KEYS_TMPL[key[0]] = gcode_macro.load_template(config,
+                'key_'+ key[0]+'_gcode', 'M117 Key '+key[0]+' Press')
         self.sample_timer = self.reactor.register_timer(self._sample_mcp23017)
-        self.printer.add_object(self.name, self)
-        # self.printer.register_event_handler("klippy:ready", self.handle_connect)
+        self.printer.add_object("mcp23017" + self.name, self)
         self.printer.register_event_handler("klippy:connect", self.handle_connect)
         # self.mcu.register_config_callback(self.build_config)
         # self.oid = self.i2c.get_oid()
 
     def handle_connect(self):
         self._init_mcp23017()
-        # self.reactor.update_timer(self.sample_timer, self.reactor.NOW)
+        self.reactor.update_timer(self.sample_timer, self.reactor.NOW)
 
     def setup_callback(self, cb):
         self._callback = cb
@@ -85,76 +101,114 @@ class mcp23017(object):
         return self.report_time
 
     def _init_mcp23017(self):
-        logging.info("mcp23017: Init")
-       
-        try: # Init Registers
+
+        try:
             # Port Directions
-            self.write_register(IODIRA, 0x5f)
-            self.write_register(IODIRB, 0x6d)
+            self.write_register(IODIRA, 0x5f) # 0101 1111
+            self.write_register(IODIRB, 0x6d) # 0110 1101
             # Keys PolUp
             self.write_register(GPPUA, 0x5f)
             self.write_register(GPPUB, 0x6d)
-            # Keys Intterupts
-            # self.write_register(IOCON, 0x40) # INT Mirror
-            # self.write_register(IOCON, 0x42) # INT Mirror and PolUp
-            # self.write_register(GPINTENA, 0x5f)
-            # self.write_register(GPINTENB, 0x6d)
+            # Keys Intterupts          
+            self.write_register(IOCON, 0x40) # INT Mirror
+            # self.write_register(IOCON, 0x42) # Mirror and PolUp INT pins
+            self.write_register(INTCONA, 0x5f) # Compare mode
+            self.write_register(INTCONB, 0x6d)
+            self.write_register(DEFVALA, 0x5f) # FALLING mode
+            self.write_register(DEFVALB, 0x6d)
+            self.write_register(GPINTENA, 0x5f) # Enable
+            self.write_register(GPINTENB, 0x6d)
 
-            a = self.read_register(GPIOA)
-            b = self.read_register(GPIOB)
-            logging.info('mcp23017: GPIOA %#x GPIOB %#x' % (a,b))
-                    
+            # gpio = self.read_gpio()
+            # logging.info('mcp23017: Init GPIO %#x' % gpio)
+
+            # for key in KEYS.iteritems():
+            # logging.info('key_%s', key[0])
+
+            # self.led_test()
+
         except Exception:
             logging.exception("mcp23017: Init Registers")
-        
-        try: # Led test
-            self.write_register(GPIOA, 0xff)
-            self.write_register(GPIOB, 0xff)
-            self.reactor.pause(self.reactor.monotonic() + 3) # wait 3s
-            self.write_register(GPIOA, 0x5f)
-            self.write_register(GPIOB, 0x6d)
-        except Exception:
-            logging.exception("mcp23017: Error Led Test")
 
-        # Wait 15ms after reset
-        # self.reactor.pause(self.reactor.monotonic() + .15)
 
     def _sample_mcp23017(self, eventtime):
         try:
-            a = self.read_register(GPIOA)
-            b = self.read_register(GPIOB)
-            logging.info('mcp23017: GPIOA %#x GPIOB %#x' % (a,b))
+            ### Keys Hook (Non innterupt)
+            key_int = self.read_int()
+            # logging.info('mcp23017: INTF %#x' % intf)
+            if key_int in KEYS.itervalues():
+                key_name = self.get_key_name(KEYS, key_int)
+                # if gpio == KEYS['1']:
+                self.gcode.run_script(self.KEYS_TMPL[key_name].render())
+                # self.data = key_name
+                # logging.info('mcp23017: data %s' % self.data)
+
+            # self.write_gpio(0x5f6d)
+            # logging.info('mcp23017: INT %#x', self.read_int())
+            # self.led_on(1)
+
         except Exception:
             logging.exception("mcp23017: Error reading data")
             return self.reactor.NEVER
 
         measured_time = self.reactor.monotonic()
-        # self._callback(self.mcu.estimated_print_time(measured_time), self.data)
+        self._callback(self.mcu.estimated_print_time(measured_time), self.data)
         return measured_time + self.report_time
 
+    def led_test(self):
+        try:
+            for pin in LED.values():
+                # logging.info('mcp23017: Led %d', pin)
+                self.set_led(pin, 1)
+                self.reactor.pause(self.reactor.monotonic() + 3) # wait 3s
+                self.set_led(pin, 0)
+        except Exception:
+            logging.exception("mcp23017: Error Led Test")
+
     def read_register(self, reg_name):
-        # read register
-        # regs = [MCP23017_REGS[reg_name]]
         params = self.i2c.i2c_read([reg_name], 8)
         return bytearray(params['response'])[0]
 
-#    def read_GPIOAB(self):
-#         a = self.read_register(GPIOA)
-#         b = self.read_register(GPIOB)
-#         logging.info('mcp23017: GPIOA %#x GPIOB %#x' % (a,b))
-
     def write_register(self, reg_name, data):
-        # self.i2c.i2c_write([0x13, 0x6f])
-        # if type(data) is not list:
-        #     data = [data]
-        # reg = MCP23017_REGS[reg_name]
-        # data.insert(0, reg)
-        # logging.info('mcp23017: data %#x' % data[0])
         self.i2c.i2c_write([reg_name, data])
+    
+    def read_gpio(self):
+        # Default GPIOAB: 0x5f6d
+        a = self.read_register(GPIOA)
+        b = self.read_register(GPIOB)
+        ab = (a << 8) | b      
+        # logging.info('mcp23017: Read A %#x B %#x' % (a,b))
+        # logging.info('mcp23017: GPIO %#x' % ab)
+        return ab
+
+    def set_led(self, pin, mode):
+        ## shell metod
+        cmd = str(100 + pin) + ' ' + str(mode)
+        # logging.info('mcp23017: %s', cmd)
+        os.popen('gpio -x mcp23017:100:0x20 write '+ cmd)
+        # output = stream.read()
+    
+    def write_gpio(self, data):
+        a = data >> 8
+        b = data & 0xff
+
+        # logging.info('mcp23017: GPIO %#x (%s)' % (data, bin(data)))   
+        # logging.info('mcp23017: GPIO %#x (%s) %#x (%s)' % (a, bin(a), b, bin(b)))
+        self.i2c.i2c_write([GPIOA, a])
+        self.i2c.i2c_write([GPIOB,b])
+
+    def read_int(self):
+        a = self.read_register(INTFA)
+        b = self.read_register(INTFB)
+        return (a | b)
+        # logging.info('mcp23017: INTFA %#x INFB %#x INF %#x' % (a, b, (a | b)))
+
+    def get_key_name(self, d, v):
+        return next(key for key, value in d.iteritems() if value == v)
 
     def get_status(self, eventtime):
         return {
-            'data': self.data,
+            'data:': self.data,
         }
 
 def load_config(config):
