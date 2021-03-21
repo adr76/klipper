@@ -41,8 +41,10 @@ i2cget -y 0 0x20 0x01       # Get PORTB Mode
 
 # Get PA PB Mode
 i2cget -y 0 0x20 0x00 && i2cget -y 0 0x20 0x01
-# Get PA PB State
+# Get PA PB GPIO State
 i2cget -y 0 0x20 0x12 && i2cget -y 0 0x20 0x13
+# Get PA PB GPIO output latches
+i2cget -y 0 0x20 0x14 && i2cget -y 0 0x20 0x15
 
 i2cset -y 0 0x20 0x00 0xFF              # SET ALL INPUTS PORTA
 

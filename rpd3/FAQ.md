@@ -14,8 +14,9 @@ make menuconfig
 # Micro-controller Architecture (LPC176x (Smoothieboard))  --->
 # [*] Target board uses Smoothieware bootloader
 # [ ] Use USB for communication (instead of serial)
-# GPIO pins to set: !P2.3, !P0.18, !P0.16, !P0.15, !P1.0
+# GPIO SET: !P2.3,!P2.4,!P2.7,!P0.18,!P0.16,!P0.15,!P1.0
 make
+ps_on
 ./scripts/flash-sdcard.sh /dev/ttyS3 btt-skr-v1.4
 sudo service klipper start
 
@@ -25,6 +26,7 @@ sudo cp "./scripts/klipper-mcu-start.sh" /etc/init.d/klipper_mcu
 sudo update-rc.d klipper_mcu defaults
 cd ~/klipper/
 make menuconfig => Linux MCU
+# GPIO SET: 
 sudo service klipper stop
 make flash
 sudo service klipper start
