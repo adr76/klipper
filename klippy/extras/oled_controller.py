@@ -83,20 +83,29 @@ class mcp23017(object):
         # Init Gcode macros
         self.gcode = self.printer.lookup_object('gcode')
         gcode_macro = self.printer.load_object(config, 'gcode_macro')
+        self.ready_gcode = gcode_macro.load_template(config, 'ready_gcode','')
+        self.disconnect_gcode = gcode_macro.load_template(config, 'disconnect_gcode','')
         self.btn_tmpl = {}
         for key, val in buttons.items():
             tmpl = 'btn_'+key+'_gcode'
             gcode = 'M117 Key '+ key
             self.btn_tmpl[key] = gcode_macro.load_template(config, tmpl, gcode)
+        #
         self.printer.add_object("mcp23017" + self.name, self)
         self.printer.register_event_handler("klippy:connect", self.handle_connect)
-        # self.printer.register_event_handler("klippy:ready ", self.handle_ready)
-        # self.printer.register_event_handler("klippy:disconnect", self.handle_disconnect)
+        self.printer.register_event_handler("klippy:ready", self.handle_ready)
+        self.printer.register_event_handler("klippy:disconnect", self.handle_disconnect)
         # self.mcu.register_config_callback(self.build_config)
 
     def handle_connect(self):
         self._init_mcp23017()
         self.reactor.update_timer(self.sample_timer, self.reactor.NOW)
+
+    def handle_ready(self):
+        self.gcode.run_script(self.ready_gcode.render())
+
+    def handle_disconnect(self):
+        self.gcode.run_script(self.disconnect_gcode.render())
 
     def setup_callback(self, cb):
         self._callback = cb
