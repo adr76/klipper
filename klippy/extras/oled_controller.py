@@ -64,6 +64,7 @@ buttons = {
 }
 
 MCP23017_REPORT_TIME = 1 #sec
+MAX_PRESS = 3 #sec
 
 # Klipper Log
 # tail -f /tmp/klippy.log | grep -i -E "(mcp23017:|error|Unable)
@@ -79,12 +80,14 @@ class mcp23017(object):
         self.mcu = self.i2c.get_mcu()
         self.report_time = MCP23017_REPORT_TIME
         self.last_btn = None
+        self.press_count = dict.fromkeys(buttons, 0)
         self.led_state = dict.fromkeys(leds, 0)
         # Init Gcode macros
         self.gcode = self.printer.lookup_object('gcode')
         gcode_macro = self.printer.load_object(config, 'gcode_macro')
-        self.ready_gcode = gcode_macro.load_template(config, 'ready_gcode','')
-        self.disconnect_gcode = gcode_macro.load_template(config, 'disconnect_gcode','')
+        self.shutdown_gcode = gcode_macro.load_template(config, 'shutdown_gcode ','M117 System Shutdown')
+        self.ready_gcode = gcode_macro.load_template(config, 'ready_gcode','M117 Ready')
+        self.disconnect_gcode = gcode_macro.load_template(config, 'disconnect_gcode','M117 Disconnect')
         self.btn_tmpl = {}
         for key, val in buttons.items():
             tmpl = 'btn_'+key+'_gcode'
@@ -99,6 +102,8 @@ class mcp23017(object):
 
     def handle_connect(self):
         self._init_mcp23017()
+        # PSU Power Led ON
+        self.set_led('pwr')
         self.reactor.update_timer(self.sample_timer, self.reactor.NOW)
 
     def handle_ready(self):
@@ -145,11 +150,22 @@ class mcp23017(object):
             ### Button Press Hook
             btn_name = self.get_btn()
             if btn_name:
-                logging.info('Button press: %s' % btn_name)
-                if btn_name in leds.keys():
-                    self.set_led(btn_name)
-                self.gcode.run_script(self.btn_tmpl[btn_name].render())
+                # logging.info('Button press: %s' % btn_name)
+                if btn_name == self.last_btn:
+                    if btn_name == 'pwr':
+                        if self.press_count[btn_name] == MAX_PRESS:
+                            self.press_count[btn_name] = 0
+                            self.cmd_shutdown()
+                        else:
+                           self.press_count[btn_name] += 1 
+                    else:
+                        return
+                else:
+                    if btn_name in leds.keys(): self.set_led(btn_name)
+                    self.gcode.run_script(self.btn_tmpl[btn_name].render())
+
                 self.last_btn = btn_name
+
         except Exception:
             logging.exception("mcp23017: Error reading data")
             return self.reactor.NEVER
@@ -158,6 +174,10 @@ class mcp23017(object):
         # self._callback(self.mcu.estimated_print_time(measured_time), self.data)
         # logging.info('mcp23017: %d' % measured_time)
         return measured_time + self.report_time
+
+    def cmd_shutdown(self):
+        logging.info('cmd_shutdown')
+        self.gcode.run_script(self.shutdown_gcode.render())
 
     def led_test(self):
         try:
@@ -258,6 +278,7 @@ class mcp23017(object):
     def get_status(self, eventtime):
         return {
             'button:': self.last_btn,
+            'press:': self.press_count,
             'leds' : self.led_state,
         }
 
