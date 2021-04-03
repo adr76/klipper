@@ -58,13 +58,17 @@ leds = {
 
 # Buttons 
 buttons = {
-    'up' : 0x100, 'filament' : 0x400, 'down' : 0x800,
-    '1' : 0x1, '2' : 0x2, '3' : 0x4, '4' : 0x8, '5' : 0x10,
+    'up' : 0x100,
+    'filament' : 0x400,
+    'down' : 0x800,
+    '1' : 0x1,
+    '2' : 0x2, '3' : 0x4, '4' : 0x8, '5' : 0x10,
     'pwr' : 0x2000, 'fan' : 0x4000, 'pause' : 0x40
+    # 'fan_pwr' : 0x6000
 }
 
-MCP23017_REPORT_TIME = 1 #sec
-MAX_PRESS = 3 #sec
+MCP23017_REPORT_TIME = 0.5 #sec
+LONG_PRESS = 3 #counts
 
 # Klipper Log
 # tail -f /tmp/klippy.log | grep -i -E "(mcp23017:|error|Unable)
@@ -79,22 +83,23 @@ class mcp23017(object):
         self.i2c = bus.MCU_I2C_from_config(config, MCP23017_ADDR, MCP23017_SPEED)
         self.mcu = self.i2c.get_mcu()
         self.report_time = MCP23017_REPORT_TIME
-        self.last_btn = None
-        self.press_count = dict.fromkeys(buttons, 0)
+        self.last_button = None
+        self.button_event = {'button': None, 'event':None}
+        self.pressed_button = None
+        self.repeat_count = 0
         self.led_state = dict.fromkeys(leds, 0)
         # Init Gcode macros
         self.gcode = self.printer.lookup_object('gcode')
         gcode_macro = self.printer.load_object(config, 'gcode_macro')
-        self.shutdown_gcode = gcode_macro.load_template(config, 'shutdown_gcode ','M117 System Shutdown')
         self.ready_gcode = gcode_macro.load_template(config, 'ready_gcode','M117 Ready')
         self.disconnect_gcode = gcode_macro.load_template(config, 'disconnect_gcode','M117 Disconnect')
         self.btn_tmpl = {}
         for key, val in buttons.items():
             tmpl = 'btn_'+key+'_gcode'
-            gcode = 'M117 Key '+ key
+            gcode = 'M117 '+key
             self.btn_tmpl[key] = gcode_macro.load_template(config, tmpl, gcode)
         #
-        self.printer.add_object("mcp23017" + self.name, self)
+        self.printer.add_object(self.name, self)
         self.printer.register_event_handler("klippy:connect", self.handle_connect)
         self.printer.register_event_handler("klippy:ready", self.handle_ready)
         self.printer.register_event_handler("klippy:disconnect", self.handle_disconnect)
@@ -102,8 +107,8 @@ class mcp23017(object):
 
     def handle_connect(self):
         self._init_mcp23017()
-        # PSU Power Led ON
-        self.set_led('pwr')
+        # self.led_test()
+        # self.set_led('pwr', 1)
         self.reactor.update_timer(self.sample_timer, self.reactor.NOW)
 
     def handle_ready(self):
@@ -141,30 +146,23 @@ class mcp23017(object):
             self.write_register(DEFVALB, 0x6d)
             self.write_register(GPINTENA, 0x5f) # Enable
             self.write_register(GPINTENB, 0x6d)
-            # self.led_test()
         except Exception:
             logging.exception("mcp23017: Error init registers")
 
     def _sample_mcp23017(self, eventtime):
         try:
-            ### Button Press Hook
-            btn_name = self.get_btn()
-            if btn_name:
-                # logging.info('Button press: %s' % btn_name)
-                if btn_name == self.last_btn:
-                    if btn_name == 'pwr':
-                        if self.press_count[btn_name] == MAX_PRESS:
-                            self.press_count[btn_name] = 0
-                            self.cmd_shutdown()
-                        else:
-                           self.press_count[btn_name] += 1 
-                    else:
-                        return
-                else:
-                    if btn_name in leds.keys(): self.set_led(btn_name)
-                    self.gcode.run_script(self.btn_tmpl[btn_name].render())
-
-                self.last_btn = btn_name
+            ### Button Events Hook
+            self._button_event()
+            event = self.button_event['event']
+            button = self.button_event['button']
+            # logging.info('%s : %s' % (button, event))
+            if event == 'release':
+                # logging.info('Button %s: Release' % button)
+                self.last_button = button
+                if button in leds.keys(): self.change_led(button)
+                self.gcode.run_script(self.btn_tmpl[button].render())
+            # if event == 'lpress':
+                # logging.info('Button %s: Long Press' % button)
 
         except Exception:
             logging.exception("mcp23017: Error reading data")
@@ -175,17 +173,63 @@ class mcp23017(object):
         # logging.info('mcp23017: %d' % measured_time)
         return measured_time + self.report_time
 
-    def cmd_shutdown(self):
-        logging.info('cmd_shutdown')
-        self.gcode.run_script(self.shutdown_gcode.render())
+    def _button_event(self):
+        event = None
+        button = None
+        # Get MCP Button by Interrupt Change
+        a = self.read_register(INTFA)
+        b = self.read_register(INTFB)
+        data = (b << 8) | a
+        # logging.info('data: %s %s' % (format(data, '016b'), hex(data)))
+        if data in buttons.itervalues():
+            btn_name = self.get_dict_key(buttons, data)
+            button   = btn_name
+            if self.pressed_button:
+                self.repeat_count += 1
+                # Repeat Event
+                event = 'repeat'
+                # Long Press Event
+                if self.repeat_count > LONG_PRESS:
+                    event = 'lpress'
+                    self.repeat_count = 0
+            else:
+                # Press Event
+                event = 'press'
+            self.pressed_button = btn_name
+        elif self.pressed_button:
+            # Relese Event
+            button = self.pressed_button
+            event  = 'release'
+            self.repeat_count = 0
+            self.pressed_button = None
+
+        self.button_event.update({'button': button, 'event':event})
+
+    def set_led(self, led, state):
+        # Set LED state On/Off
+        bit = leds[led]       
+        if bit < 8:
+            self.bit_set(GPIOA, bit, state)
+        else:
+            self.bit_set(GPIOB, bit-8, state)
+
+        self.led_state[led] = state
+        # logging.info('Set Led: %s | %d' % (led, state))
+
+    def change_led(self, led):
+        on = self.led_state[led]
+        if on:
+            self.set_led(led, 0)
+        else:       
+            self.set_led(led, 1)
 
     def led_test(self):
         try:
             for led in leds.keys():
-                logging.info('mcp23017: Led test %d', led)
-                self.set_led(led)
-                self.reactor.pause(self.reactor.monotonic() + 3) # wait 3s
-                self.set_led(led)
+                logging.info('Led test: %d', led)
+                self.set_led(led, 1)
+                self.reactor.pause(self.reactor.monotonic() + 1) # wait
+                self.set_led(led, 0)
         except Exception:
             logging.exception("mcp23017: Error Led Test")
 
@@ -221,52 +265,14 @@ class mcp23017(object):
         # logging.info('mcp23017: Read A %#x B %#x' % (a,b))
         # logging.info('mcp23017: GPIO %#x' % ab)
         return ab
-
-    def set_led(self, led, on=1):
-        bit = leds[led]       
-        state = self.led_state[led]
-        # Change State On/Off
-        if bit < 8:
-            self.bit_change(GPIOA, bit)
-            # reg_data = self.read_register(OLATA)
-            # reg_data ^= (1 << bit)
-            # self.write_register(GPIOA, reg_data)
-        else:
-            self.bit_change(GPIOB, bit-8)
-            # self.bit_change(GPIOB, bit-8)
-            # reg_data = self.read_register(OLATB)
-            # reg_data ^= (1 << bit)
-            # self.write_register(GPIOB, reg_data)
-        if state:
-            state = 0
-        else:       
-            state = 1
-        self.led_state[led] = state
-        # logging.info('Set Led: %s | %d' % (led, state))
             
     def write_gpio(self, data):
         a = data >> 8
         b = data & 0xff
-
         # logging.info('mcp23017: GPIO %#x (%s)' % (data, bin(data)))   
         # logging.info('mcp23017: GPIO %#x (%s) %#x (%s)' % (a, bin(a), b, bin(b)))
         self.i2c.i2c_write([GPIOA, a])
-        self.i2c.i2c_write([GPIOB,b])
-
-    def get_btn(self):
-        # Get Button Name by Interrupt Change
-        a = self.read_register(INTFA)
-        b = self.read_register(INTFB)
-        data = (b << 8) | a
-        if data:
-            # logging.info('data: %s' % (format(data, '016b')))
-            # logging.info('data: %s' % hex(data))
-            if data in buttons.itervalues():
-                return self.get_dict_key(buttons, data)
-            else:
-                return None    
-        else:
-            return None
+        self.i2c.i2c_write([GPIOB, b])
 
     def get_dict_key(self, _dict, _val):
         # return next(key for key, value in _dict.items() if value == _val)
@@ -277,8 +283,10 @@ class mcp23017(object):
 
     def get_status(self, eventtime):
         return {
-            'button:': self.last_btn,
-            'press:': self.press_count,
+            'last_button:': self.last_button,
+            'buton': self.button_event['button'],
+            'event': self.button_event['event'],
+            'repeat': self.repeat_count,
             'leds' : self.led_state,
         }
 
