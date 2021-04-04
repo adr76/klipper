@@ -7,7 +7,6 @@
 # This file may be distributed under the terms of the GNU GPLv3 license.
 
 # import pins
-import os
 import logging
 from . import bus
 
@@ -84,7 +83,7 @@ class mcp23017(object):
         self.mcu = self.i2c.get_mcu()
         self.report_time = MCP23017_REPORT_TIME
         self.last_button = None
-        self.button_event = {'button': None, 'event':None}
+        self.button_event = {'button': None, 'event': None}
         self.pressed_button = None
         self.repeat_count = 0
         self.led_state = dict.fromkeys(leds, 0)
@@ -98,6 +97,9 @@ class mcp23017(object):
             tmpl = 'btn_'+key+'_gcode'
             gcode = 'M117 '+key
             self.btn_tmpl[key] = gcode_macro.load_template(config, tmpl, gcode)
+        # Register commands
+        self.gcode.register_command("OCLED", self.cmd_OCLED,
+                                    desc=self.cmd_OCLED_help)
         #
         self.printer.add_object(self.name, self)
         self.printer.register_event_handler("klippy:connect", self.handle_connect)
@@ -289,6 +291,21 @@ class mcp23017(object):
             'repeat': self.repeat_count,
             'leds' : self.led_state,
         }
+
+    cmd_OCLED_help = "Set oled_controller led On/Off"
+    def cmd_OCLED(self, gcmd):
+        on_led = gcmd.get('ON', None)
+        off_led = gcmd.get('OFF', None)
+        if on_led:
+            led = on_led
+            val = 1
+        else:
+            led = off_led
+            val = 0
+        if led not in leds.keys():
+            raise gcmd.error('Invalid LED='+led+' : %s' % leds.keys())
+        self.set_led(led, val)
+        # gcmd.respond_info("Set led %s:%d " % (led, val))
 
 def load_config(config):
     return mcp23017(config)
