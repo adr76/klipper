@@ -6,3 +6,4 @@ out
 .config.old
 klippy/.version
 .vscode/settings.json
+rpd3/variables.cfg
