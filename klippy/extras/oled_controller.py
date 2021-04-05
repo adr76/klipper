@@ -98,8 +98,8 @@ class mcp23017(object):
             gcode = 'M117 '+key
             self.btn_tmpl[key] = gcode_macro.load_template(config, tmpl, gcode)
         # Register commands
-        self.gcode.register_command("OCLED", self.cmd_OCLED,
-                                    desc=self.cmd_OCLED_help)
+        self.gcode.register_command("POWEROFF", self.cmd_POWEROFF, desc=self.cmd_POWEROFF_help) 
+        self.gcode.register_command("OCLED", self.cmd_OCLED, desc=self.cmd_OCLED_help)
         #
         self.printer.add_object(self.name, self)
         self.printer.register_event_handler("klippy:connect", self.handle_connect)
@@ -291,6 +291,26 @@ class mcp23017(object):
             'repeat': self.repeat_count,
             'leds' : self.led_state,
         }
+        
+    cmd_POWEROFF_help = "System Poweroff"
+    def cmd_POWEROFF(self, gcmd):
+        # eventtime = self.reactor.monotonic()
+        # idle_timeout = self.printer.lookup_object('idle_timeout')
+        # state = idle_timeout.get_status(eventtime)["state"]
+        # is_printing = idle_timeout.get_status(eventtime)["state"] == "Printing"
+        # logging.info(idle_timeout.get_status(eventtime))
+        # gcmd.respond_info("System Poweroff after 1m. 'shutdown -c' to cancel ")
+        try:
+            import subprocess
+            # retcode = subprocess.call("sudo systemctl poweroff", shell=True)
+            retcode = subprocess.call("sudo shutdown -h +1", shell=True)
+            # subprocess.call(["sudo", "poweroff"])
+            if retcode < 0:
+                logging.info("Child was terminated by signal %d" % -retcode)
+            else:
+                logging.info("Child returned %d" % retcode)
+        except OSError as e:
+            logging.info("Execution failed: %s" % e)
 
     cmd_OCLED_help = "Set oled_controller led On/Off"
     def cmd_OCLED(self, gcmd):
